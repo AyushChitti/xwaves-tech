@@ -46,4 +46,6 @@ if uploaded_file:
         input_tensor = preprocess_image(image)
         output = model(input_tensor)
         prediction = torch.argmax(output, dim=1).item()
-        label = "PNEUMO
+        label = "PNEUMONIA" if prediction == 1 else "NORMAL"
+
+        st.success(f"✅ Prediction: **{label}**")
