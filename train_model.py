@@ -1,88 +1,49 @@
+import streamlit as st
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torchvision import datasets, models, transforms
-from torch.utils.data import DataLoader
-import time
+from torchvision import models, transforms
+from PIL import Image
+import io
 
-# 1. Device configuration
+# Set page config
+st.set_page_config(page_title="X-ray Pneumonia Classifier", layout="centered")
+
+st.title("🩺 Chest X-ray Pneumonia Classifier")
+
+# Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 2. Image transforms
-transform = {
-    "train": transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor()
-    ]),
-    "val": transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor()
-    ])
-}
-
-# 3. Dataset paths
-data_dir = "chest_xray"
-train_dataset = datasets.ImageFolder(f"{data_dir}/train", transform=transform["train"])
-val_dataset = datasets.ImageFolder(f"{data_dir}/val", transform=transform["val"])
-
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=32)
-
-# 4. Load Pretrained ResNet18
-model = models.resnet18(pretrained=True)
-
-# Replace the final layer (original output was 1000 classes)
-num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 2)  # 2 classes: NORMAL, PNEUMONIA
-
-model = model.to(device)
-
-# 5. Loss and optimizer
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.0001)
-
-# 6. Training loop
-num_epochs = 5
-best_accuracy = 0.0
-
-for epoch in range(num_epochs):
-    print(f"\nEpoch {epoch + 1}/{num_epochs}")
-    model.train()
-    running_loss = 0.0
-
-    for inputs, labels in train_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
-
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item()
-
-    print(f"Training loss: {running_loss / len(train_loader):.4f}")
-
-    # Validation
+# Load model
+@st.cache_resource
+def load_model():
+    model = models.resnet18(pretrained=False)
+    model.fc = nn.Linear(model.fc.in_features, 2)
+    model.load_state_dict(torch.load("best_model.pt", map_location=device))
+    model.to(device)
     model.eval()
-    correct = 0
-    total = 0
+    return model
 
-    with torch.no_grad():
-        for inputs, labels in val_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+model = load_model()
 
-    accuracy = 100 * correct / total
-    print(f"Validation accuracy: {accuracy:.2f}%")
+# Image preprocessing
+def preprocess_image(image):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406],  # Use ImageNet mean/std
+                             [0.229, 0.224, 0.225])
+    ])
+    return transform(image).unsqueeze(0).to(device)
 
-    # Save best model
-    if accuracy > best_accuracy:
-        best_accuracy = accuracy
-        torch.save(model.state_dict(), "best_model.pt")
-        print("✅ Best model saved!")
+# Upload image
+uploaded_file = st.file_uploader("Upload a chest X-ray image (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
+if uploaded_file:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded X-ray Image", use_column_width=True)
+
+    with st.spinner("Analyzing X-ray..."):
+        input_tensor = preprocess_image(image)
+        output = model(input_tensor)
+        prediction = torch.argmax(output, dim=1).item()
+        label = "PNEUMO
